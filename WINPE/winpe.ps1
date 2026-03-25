@@ -51,7 +51,7 @@ diskpart /s %USB%\scripts\partition.txt
 if errorlevel 1 (echo DISKPART FAILED & pause & exit)
 
 echo Applying Windows image...
-dism /Apply-Image /ImageFile:%USB%\sources\install.swm /SWMFile:%USB%\sources\install*.swm /Index:1 /ApplyDir:W:\ /Compact
+dism /Apply-Image /ImageFile:%USB%\sources\install.swm /SWMFile:%USB%\sources\install*.swm /Index:1 /ApplyDir:W:\
 if errorlevel 1 (echo DISM FAILED & pause & exit)
 
 echo Setting up boot...
@@ -95,12 +95,14 @@ if ($LASTEXITCODE -ne 0) { throw "DISM split failed" }
 Remove-Item "$WinPE\media\sources\install.wim" -Force
 
 # Prepare USB manually (MakeWinPEMedia.cmd fails on drives >32GB due to FAT32 limit)
+# Cap partition to media size + 512MB buffer so FAT32 format works on any size drive
+$mediaSizeMB = [math]::Ceiling((Get-ChildItem "$WinPE\media" -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB) + 512
 $usbDisk = (Get-Partition -DriveLetter ($USB.TrimEnd(':'))).DiskNumber
 $dpScript = "$env:TEMP\prep_usb.txt"
 @"
 select disk $usbDisk
 clean
-create partition primary
+create partition primary size=$mediaSizeMB
 format fs=fat32 quick label=WinPE
 assign letter=$($USB.TrimEnd(':'))
 active
@@ -111,6 +113,6 @@ diskpart /s $dpScript
 if ($LASTEXITCODE -ne 0) { throw "DiskPart USB prep failed ($LASTEXITCODE)" }
 Remove-Item $dpScript -Force
 
-# Copy WinPE media to USB
-robocopy "$WinPE\media" "$USB\" /E /NFL /NDL /NJH /NJS
+# Copy WinPE media to USB (multithreaded for speed)
+robocopy "$WinPE\media" "$USB\" /E /MT:16 /NFL /NDL /NJH /NJS
 if ($LASTEXITCODE -ge 8) { throw "Robocopy failed ($LASTEXITCODE)" }
